@@ -18,76 +18,44 @@ include(FetchContent)
 option(USE_SALTATLAS OFF)
 option(USE_KROWKEE OFF)
 
-#
-#  Threads
-#
-find_package(Threads REQUIRED)
 
-
-#
-# Boost
-include(setup_boost)
-prepare_fetchcontent_boost()
-set(FETCHCONTENT_QUIET FALSE)
-FetchContent_Declare(
-        Boost
-        GIT_REPOSITORY https://github.com/boostorg/boost.git
-        GIT_TAG boost-1.78.0
-        GIT_SUBMODULES ${BOOST_REQD_SUBMODULES}
-        GIT_PROGRESS TRUE
-        CONFIGURE_COMMAND ""  # tell CMake it's not a cmake project
-)
-FetchContent_MakeAvailable(Boost)
-get_boost_include_dirs()
-
-#
-#  MPI
-find_package(MPI)
 
 #
 #  YGM
-if (MPI_CXX_FOUND)
-    find_package(YGM QUIET)
-    if (NOT YGM_FOUND)
-        set(JUST_INSTALL_YGM TRUE)
-        FetchContent_Declare(YGM
-            GIT_REPOSITORY https://github.com/llnl/ygm.git
-            GIT_TAG v0.7-dev
-                )
-        FetchContent_MakeAvailable(YGM)
-    endif ()
-endif ()
+set(YGM_REQUIRE_PARQUET ON)
+set(YGM_INSTALL_PARQUET ON)
+FetchContent_Declare(YGM
+    GIT_REPOSITORY https://github.com/llnl/ygm.git
+    GIT_TAG v0.8-dev
+        )
+FetchContent_MakeAvailable(YGM)
 
 #
 #  SaltAtlas
 if (USE_SALTATLAS)
-  if (MPI_CXX_FOUND)
-    find_package(SALTATLAS QUIET)
-    if (NOT SALTATLAS_FOUND)
-      set(JUST_INSTALL_SALTATLAS TRUE)
-      set(SALTATLAS_USE_HDF5 FALSE)
-      FetchContent_Declare(SALTATLAS
-        GIT_REPOSITORY https://github.com/llnl/saltatlas.git
-        GIT_TAG v0.3-dev
-        )
-      FetchContent_MakeAvailable(SALTATLAS)
-    endif ()
+  find_package(SALTATLAS QUIET)
+  if (NOT SALTATLAS_FOUND)
+    set(JUST_INSTALL_SALTATLAS TRUE)
+    set(SALTATLAS_USE_HDF5 FALSE)
+    FetchContent_Declare(SALTATLAS
+      GIT_REPOSITORY https://github.com/llnl/saltatlas.git
+      GIT_TAG v0.3-dev
+      )
+    FetchContent_MakeAvailable(SALTATLAS)
   endif ()
 endif ()
 
 #
 # Krowkee
 if (USE_KROWKEE)
-  if (MPI_CXX_FOUND)
-    find_package(KROWKEE QUIET)
-    if (NOT KROWKEE_FOUND)
-      set(JUST_INSTALL_KROWKEE TRUE)
-      FetchContent_Declare(KROWKEE
-        GIT_REPOSITORY https://github.com/llnl/krowkee.git
-        GIT_TAG develop
-        )
-      FetchContent_MakeAvailable(KROWKEE)
-    endif ()
+  find_package(KROWKEE QUIET)
+  if (NOT KROWKEE_FOUND)
+    set(JUST_INSTALL_KROWKEE TRUE)
+    FetchContent_Declare(KROWKEE
+      GIT_REPOSITORY https://github.com/llnl/krowkee.git
+      GIT_TAG develop
+      )
+    FetchContent_MakeAvailable(KROWKEE)
   endif ()
 endif ()
 
@@ -137,14 +105,6 @@ endfunction()
 # Function for setting up a target that uses YGM
 #
 function(setup_ygm_target exe_name)
-    if (NOT MPI_CXX_FOUND)
-        message(WARNING "YGM requires MPI; skip building ${exe_name}.")
-        return()
-    endif ()
-
-    target_link_libraries(${exe_name} PRIVATE MPI::MPI_CXX)
-    target_link_libraries(${exe_name} PRIVATE cereal)
-    target_link_libraries(${exe_name} PRIVATE Threads::Threads)
     if (${CMAKE_HOST_SYSTEM_NAME} MATCHES "Linux")
         target_link_libraries(${exe_name} PRIVATE rt)
     endif ()
