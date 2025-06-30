@@ -105,7 +105,7 @@ int main(int argc, char** argv){
     static double upper = 5;
 
     if(world.rank0()){
-        for(int i = 0; i < 6; i++){
+        for(int i = 0; i < 10; i++){
             std::vector<double> vec = gen_random_vector(lower, upper);
             add_wolf(wolf_map, i, vec);
         }
@@ -114,6 +114,7 @@ int main(int argc, char** argv){
 
 
     static int global_t = 0;
+    static int total_iterations = 1000;
 
     static int alpha;
     static int beta;
@@ -131,7 +132,7 @@ int main(int argc, char** argv){
 
     std::vector<double> fittest_solution;
 
-   while(global_t <= 5000){
+   while(global_t <= total_iterations){
 
         auto cmp = [](const std::pair<int, wolf_info> &a, const std::pair<int, wolf_info> &b) {
             return a.second.fitness_value < b.second.fitness_value;  
@@ -168,7 +169,7 @@ int main(int argc, char** argv){
         */
 
         // slowly decrements from 2 to 0
-        static double a = 2 - 2 * ((double)global_t / 200);
+        static double a = 2 - 2 * ((double)global_t / total_iterations);
 
         wolf_map.for_all([](int wolf_num, wolf_info& wi){
             std::vector<double> alpha_X = calculate_X(top_three[0].second.pos, wi.pos, a);

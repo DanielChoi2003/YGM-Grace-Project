@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-add_ygm_executable(read_json_example)
 add_ygm_executable(grey_wolf)
 add_ygm_executable(triangle_centrality)
+add_ygm_executable(bareiss)
 
