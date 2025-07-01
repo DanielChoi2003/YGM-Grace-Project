@@ -115,11 +115,11 @@ int main(int argc, char** argv) {
 
   #ifdef random_graph
 
-  const int total_edges = 4950;
-  const int total_vertices = 100;
+  const int total_edges = 1600000;
+  const int total_vertices = 100000;
 
   std::random_device rd;  // a seed source for the random number engine
-  std::mt19937 rng(rd());
+  std::mt19937 rng(world.rank());
   std::uniform_int_distribution<int> dist(0, total_vertices - 1); // generates a number between 0 to total_vertices - 1 (inclusive)
 
   static int local_edge_count = 0;
@@ -129,34 +129,18 @@ int main(int argc, char** argv) {
 
   while(global_edge_count < total_edges){
 
-    while(true){ // loops until a unique edge has been inserted
-      local_set_size = local_set.size();
-      int u = dist(rng) % total_vertices;
-      int v = dist(rng) % total_vertices;
-      if(u == v){
-        continue;
-      }
-
-      std::pair<int, int> e = std::minmax(u, v);
-      local_set.insert(e);
-
-
-      if(local_set.size() > local_set_size){
-        add_edge(s_graph, e.first, e.second); 
-        break;
-      }    
+    local_set_size = local_set.size();
+    int u = dist(rng) % total_vertices;
+    int v = dist(rng) % total_vertices;
+    if(u == v){
+      continue;
     }
-    
-    
-    local_edge_count = 0;
-    graph.for_all([](int src, vert_info& vi){
-      local_edge_count += vi.adj.size();
-    });
 
-    world.barrier();
+    std::pair<int, int> e = std::minmax(u, v);
 
-    global_edge_count = ygm::all_reduce(local_edge_count, aggregator, world) / 2;
-  
+
+    add_edge(s_graph, e.first, e.second); 
+     
   }
 
 
