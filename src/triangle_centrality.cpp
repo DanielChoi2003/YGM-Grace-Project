@@ -115,21 +115,18 @@ int main(int argc, char** argv) {
 
   #ifdef random_graph
 
-  const int total_edges = 1600000;
-  const int total_vertices = 100000;
+  const int total_edges = 6400000;
+  const int total_vertices = 400000;
 
   std::random_device rd;  // a seed source for the random number engine
   std::mt19937 rng(world.rank());
   std::uniform_int_distribution<int> dist(0, total_vertices - 1); // generates a number between 0 to total_vertices - 1 (inclusive)
 
-  static int local_edge_count = 0;
-  static int global_edge_count = 0;
-  std::set<std::pair<int, int>> local_set;
-  int local_set_size = 0;
+  static int local_edge_count = total_edges / world.size();
+  int leftover = total_edges % world.size();
+  local_edge_count += (world.rank() < leftover) ? 1 : 0;
 
-  while(global_edge_count < total_edges){
-
-    local_set_size = local_set.size();
+  for(int i = 0; i < local_edge_count; i++){
     int u = dist(rng) % total_vertices;
     int v = dist(rng) % total_vertices;
     if(u == v){
@@ -138,13 +135,8 @@ int main(int argc, char** argv) {
 
     std::pair<int, int> e = std::minmax(u, v);
 
-
     add_edge(s_graph, e.first, e.second); 
-     
   }
-
-
-
 
   // somehow all ranks are pre-maturely exiting the while loop. How??
   // global_edge_set.size() is giving some uninitialized / junk value.
@@ -162,9 +154,19 @@ int main(int argc, char** argv) {
   */
 
   world.barrier();
-  
-  world.cout0("total edge count (2): ", global_edge_count);
   #endif
+
+  static int local_count = 0;
+
+  graph.for_all([](int src, vert_info& vi){
+    local_count += vi.adj.size();
+  });
+
+  int global_count = ygm::all_reduce(local_count, aggregator, world);
+
+  world.cout0("total_edges: ", global_count / 2);
+
+
 
   double start = MPI_Wtime();
 
