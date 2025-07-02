@@ -5,5 +5,5 @@
 
 add_ygm_executable(grey_wolf)
 add_ygm_executable(triangle_centrality)
-add_ygm_executable(bareiss)
+#add_ygm_executable(bareiss)
 

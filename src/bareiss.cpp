@@ -1,5 +1,5 @@
 #include <ygm/comm.hpp>
-#include <ygm/container/map.hpp>
+#include <ygm/container/array.hpp>
 #include <vector>
 #include <random>
 #include <iostream>
@@ -11,9 +11,10 @@ int main(int argc, char** argv){
 
     static ygm::comm& s_world = world;
 
-    ygm::container::map<long long, std::vector<long long>> matrix(world);
+    static int n = 5;
 
-    static int n = 30;
+    ygm::container::array<int> matrix(world, n*n);
+
 
     /*
         NOTE: since all ranks needs access to the first row,
@@ -25,54 +26,45 @@ int main(int argc, char** argv){
 
     // add the rows
     std::random_device rd; // obtain a random number from hardware
-    std::mt19937 gen(rd()); // seed with the rank number
+    std::mt19937 gen(world.size()); // seed with the rank number
     std::uniform_int_distribution<> random_n(1, 10);
 
+
     if(world.rank0()){
-        for(long long i = 0; i < n; i++){
-            std::vector<long long> row;
-            for(long long j = 0; j < n; j++){
-                row.push_back(random_n(gen));
+        std::ostringstream oss;
+        for(int i = 0; i < n*n; i++){
+            int num = random_n(gen);
+            matrix.async_set(i, num);
+            oss << num << " ";
+            if(i % n == n-1){
+                oss << '\n';
             }
-            matrix.async_insert(i, row);
-            std::ostringstream oss;
-            for(long long num : row){
-                oss << num << " ";
-            }
-            std::cout << oss.str() << std::endl;
         }
-        // std::vector<long long> v1 = {2, 8, 9, 8, 2, 10, 10, 10};
-        // std::vector<long long> v2 = {6, 2, 7, 8, 8, 6, 9, 8};
-        // std::vector<long long> v3 = {2, 3, 3, 8, 3, 1, 8, 2};
-        // std::vector<long long> v4 = {5, 10, 7, 9, 8, 9, 4, 5};
-        // std::vector<long long> v5 = {9, 2, 2, 6, 3, 3, 8, 2};
-        // std::vector<long long> v6 = {3, 2, 8, 1, 9, 3, 10, 7};
-        // std::vector<long long> v7 = {3, 2, 2, 2, 9, 10, 5, 10};
-        // std::vector<long long> v8 = {7, 2, 10, 7, 10, 3, 8, 2};
-        // matrix.async_insert(0, v1);
-        // matrix.async_insert(1, v2);
-        // matrix.async_insert(2, v3);
-        // matrix.async_insert(3, v4);
-        // matrix.async_insert(4, v5);
-        // matrix.async_insert(5, v6);
-        // matrix.async_insert(6, v7);
-        // matrix.async_insert(7, v8);
+        
+        std::cout << oss.str() << std::endl;
     }
 
     world.barrier();
 
+    // to access the array like its a 2d matrix:
+    // [5, 4] -> n * 5 + 4 = 29
 
-    double start = MPI_Wtime();
+    /*
+        [3, 2, 9]
+        [10, (7), 6]
+        [(2), 8, 4]
 
-    static std::vector<std::pair<long long, std::vector<long long>>> gathered_rows;
-    static bool flipSign = false;
+        location of 7: [1][1]
+        n * 1 + 1 = 3 * 1 + 1 = 4
 
-    for(static long long k = 0; k < n - 1; k++){ // k < n - 1
+        location of 2: [2][0]
 
-        matrix.gather(gathered_rows);
-        std::sort(gathered_rows.begin(), gathered_rows.end());
-        static long long divisor;
+        n * 2 + 0 = 3 * 2 + 0 = 6
 
+    */
+    for(int k = 0; k < n - 1; k++){
+        
+        int divisor;
         if(k == 0){
             divisor = 1;
         }
@@ -80,183 +72,204 @@ int main(int argc, char** argv){
             // M[k - 1, k - 1]
             divisor = gathered_rows.at(k - 1).second.at(k - 1);
         }
+    }
 
-        bool Bareiss_safe = true;
 
-        if(k < n - 2){ // the pivot in this row is the determinant and it can be zero. its fine.
-            if(world.rank0()){
-                // the future pivot M(k + 1, k + 1) of the next iteration k++
+    // double start = MPI_Wtime();
 
-                long long pivot = (gathered_rows.at(k + 1).second.at(k + 1) * gathered_rows.at(k).second.at(k) - 
-                            gathered_rows.at(k + 1).second.at(k) * gathered_rows.at(k).second.at(k + 1)) 
-                            / divisor;
-                long long zero_key = gathered_rows.at(k + 1).first;
-                std::vector<long long> zero_vector = gathered_rows.at(k + 1).second;
+    // static std::vector<std::pair<long long, std::vector<long long>>> gathered_rows;
+    // static bool flipSign = false;
 
-                long long non_zero_key;
-                std::vector<long long> non_zero_vector;
+    // for(static long long k = 0; k < n - 1; k++){ // k < n - 1
 
-                if(pivot == 0){ // need to swap 
+    //     matrix.gather(gathered_rows);
+    //     std::sort(gathered_rows.begin(), gathered_rows.end());
+    //     static long long divisor;
+
+    //     if(k == 0){
+    //         divisor = 1;
+    //     }
+    //     else{
+    //         // M[k - 1, k - 1]
+    //         divisor = gathered_rows.at(k - 1).second.at(k - 1);
+    //     }
+
+    //     bool Bareiss_safe = true;
+
+    //     if(k < n - 2){ // the pivot in this row is the determinant and it can be zero. its fine.
+    //         if(world.rank0()){
+    //             // the future pivot M(k + 1, k + 1) of the next iteration k++
+
+    //             long long pivot = (gathered_rows.at(k + 1).second.at(k + 1) * gathered_rows.at(k).second.at(k) - 
+    //                         gathered_rows.at(k + 1).second.at(k) * gathered_rows.at(k).second.at(k + 1)) 
+    //                         / divisor;
+    //             long long zero_key = gathered_rows.at(k + 1).first;
+    //             std::vector<long long> zero_vector = gathered_rows.at(k + 1).second;
+
+    //             long long non_zero_key;
+    //             std::vector<long long> non_zero_vector;
+
+    //             if(pivot == 0){ // need to swap 
                     
-                    world.cout0("need to swap");
-                    for(long long i = k + 2; i < n; i++){
+    //                 world.cout0("need to swap");
+    //                 for(long long i = k + 2; i < n; i++){
                         
-                        pivot = (gathered_rows.at(i).second.at(k + 1) * gathered_rows.at(k).second.at(k) - 
-                            gathered_rows.at(i).second.at(k) * gathered_rows.at(k).second.at(k + 1)) 
-                            / divisor;
+    //                     pivot = (gathered_rows.at(i).second.at(k + 1) * gathered_rows.at(k).second.at(k) - 
+    //                         gathered_rows.at(i).second.at(k) * gathered_rows.at(k).second.at(k + 1)) 
+    //                         / divisor;
                         
-                        long long a = gathered_rows.at(i).second.at(k + 1);  // M[i][k+1]
-                        long long b = gathered_rows.at(k).second.at(k);      // M[k][k]
-                        long long c = gathered_rows.at(i).second.at(k);      // M[i][k]
-                        long long d = gathered_rows.at(k).second.at(k + 1);  // M[k][k+1]
+    //                     long long a = gathered_rows.at(i).second.at(k + 1);  // M[i][k+1]
+    //                     long long b = gathered_rows.at(k).second.at(k);      // M[k][k]
+    //                     long long c = gathered_rows.at(i).second.at(k);      // M[i][k]
+    //                     long long d = gathered_rows.at(k).second.at(k + 1);  // M[k][k+1]
 
-                        long long numerator = a * b - c * d;
-                        pivot = numerator / divisor;
+    //                     long long numerator = a * b - c * d;
+    //                     pivot = numerator / divisor;
 
-                        // Prlong long each factor
-                        std::cout << "M[i][k+1] (a) = " << a << std::endl;
-                        std::cout << "M[k][k]   (b) = " << b << std::endl;
-                        std::cout << "M[i][k]   (c) = " << c << std::endl;
-                        std::cout << "M[k][k+1] (d) = " << d << std::endl;
-                        std::cout << "Numerator = a*b - c*d = " << a << "*" << b << " - " << c << "*" << d << " = " << numerator << std::endl;
-                        std::cout << "Divisor = " << divisor << std::endl;
-                        std::cout << "Pivot = " << pivot << std::endl;
+    //                     // Prlong long each factor
+    //                     std::cout << "M[i][k+1] (a) = " << a << std::endl;
+    //                     std::cout << "M[k][k]   (b) = " << b << std::endl;
+    //                     std::cout << "M[i][k]   (c) = " << c << std::endl;
+    //                     std::cout << "M[k][k+1] (d) = " << d << std::endl;
+    //                     std::cout << "Numerator = a*b - c*d = " << a << "*" << b << " - " << c << "*" << d << " = " << numerator << std::endl;
+    //                     std::cout << "Divisor = " << divisor << std::endl;
+    //                     std::cout << "Pivot = " << pivot << std::endl;
                         
-                        if(pivot != 0){
-                            non_zero_key = gathered_rows.at(i).first;
-                            non_zero_vector = gathered_rows.at(i).second;
-                            break;
-                        }
-                    }
+    //                     if(pivot != 0){
+    //                         non_zero_key = gathered_rows.at(i).first;
+    //                         non_zero_vector = gathered_rows.at(i).second;
+    //                         break;
+    //                     }
+    //                 }
 
-                    if(pivot == 0){
-                        Bareiss_safe = false;
-                    }
+    //                 if(pivot == 0){
+    //                     Bareiss_safe = false;
+    //                 }
 
-                    matrix.async_erase(zero_key);
-                    matrix.async_erase(non_zero_key);
-                    std::cout << "swapping row " << zero_key << " and " << non_zero_key << std::endl; 
+    //                 matrix.async_erase(zero_key);
+    //                 matrix.async_erase(non_zero_key);
+    //                 std::cout << "swapping row " << zero_key << " and " << non_zero_key << std::endl; 
 
-                    matrix.async_insert(zero_key, non_zero_vector);
-                    matrix.async_insert(non_zero_key, zero_vector);
-
-
-                    if(!flipSign){
-                        flipSign = true;
-                    }
-                    else{
-                        flipSign = false;
-                    }
-                }
+    //                 matrix.async_insert(zero_key, non_zero_vector);
+    //                 matrix.async_insert(non_zero_key, zero_vector);
 
 
-            }
+    //                 if(!flipSign){
+    //                     flipSign = true;
+    //                 }
+    //                 else{
+    //                     flipSign = false;
+    //                 }
+    //             }
 
-            world.barrier();
 
-            if(!Bareiss_safe){
+    //         }
 
-                if(world.rank0()){
-                    std::cout << "-----------------------------------" << std::endl;
-                    for(std::pair<long long, std::vector<long long>> key_value : gathered_rows){
-                        std::ostringstream oss;
-                        for(long long num : key_value.second){
-                            oss << num << ", ";
-                        }
-                        std::cout << oss.str() << std::endl;
-                    }
-                }
-                world.async_bcast([](){
-                    s_world.cout("the matrix is invalid");
-                    std::exit(EXIT_FAILURE);
-                });
-            }
+    //         world.barrier();
 
-            gathered_rows.clear();
-            matrix.gather(gathered_rows);
-            std::sort(gathered_rows.begin(), gathered_rows.end());
+    //         if(!Bareiss_safe){
 
-        }
+    //             if(world.rank0()){
+    //                 std::cout << "-----------------------------------" << std::endl;
+    //                 for(std::pair<long long, std::vector<long long>> key_value : gathered_rows){
+    //                     std::ostringstream oss;
+    //                     for(long long num : key_value.second){
+    //                         oss << num << ", ";
+    //                     }
+    //                     std::cout << oss.str() << std::endl;
+    //                 }
+    //             }
+    //             world.async_bcast([](){
+    //                 s_world.cout("the matrix is invalid");
+    //                 std::exit(EXIT_FAILURE);
+    //             });
+    //         }
+
+    //         gathered_rows.clear();
+    //         matrix.gather(gathered_rows);
+    //         std::sort(gathered_rows.begin(), gathered_rows.end());
+
+    //     }
 
         
 
-        // since the rank that owns row k has its local_row filled, empty rows will get filtered out
-        // ISSUE: local_row is not populated by the time this run since it is asynchronous 
-        // shared_row = ygm::all_reduce(local_row, [](std::vector<long long> a, std::vector<long long> b) {
-        //     return a.empty() ? b : a; 
-        // }, world);
+    //     // since the rank that owns row k has its local_row filled, empty rows will get filtered out
+    //     // ISSUE: local_row is not populated by the time this run since it is asynchronous 
+    //     // shared_row = ygm::all_reduce(local_row, [](std::vector<long long> a, std::vector<long long> b) {
+    //     //     return a.empty() ? b : a; 
+    //     // }, world);
         
-        world.barrier();
+    //     world.barrier();
 
-        matrix.for_all([&](long long row_num, std::vector<long long>& row){
-            if(row_num >= k + 1){
-                for(long long j = k + 1; j < n; j++){   
-                    long long prev_num = row.at(j);
+    //     matrix.for_all([&](long long row_num, std::vector<long long>& row){
+    //         if(row_num >= k + 1){
+    //             for(long long j = k + 1; j < n; j++){   
+    //                 long long prev_num = row.at(j);
                     
-                    if(row_num == k + 1 && j == k + 1){
-                        std::cout << "current iteration k: " << k << std::endl;
-                        std::cout << "("
-                                << row.at(j) << " * " << gathered_rows.at(k).second.at(k)
-                                << " - "
-                                << row.at(k) << " * " << gathered_rows.at(k).second.at(j)
-                                << ") / " << divisor
-                                << std::endl;
+    //                 if(row_num == k + 1 && j == k + 1){
+    //                     std::cout << "current iteration k: " << k << std::endl;
+    //                     std::cout << "("
+    //                             << row.at(j) << " * " << gathered_rows.at(k).second.at(k)
+    //                             << " - "
+    //                             << row.at(k) << " * " << gathered_rows.at(k).second.at(j)
+    //                             << ") / " << divisor
+    //                             << std::endl;
 
-                    }
+    //                 }
 
-                    row.at(j) = (row.at(j) * gathered_rows.at(k).second.at(k) - row.at(k) * gathered_rows.at(k).second.at(j)) / divisor;
-                    // std::cout << prev_num << " -> " << row.at(j) << " at position " << row_num << ", " << j << "." << std::endl;
+    //                 row.at(j) = (row.at(j) * gathered_rows.at(k).second.at(k) - row.at(k) * gathered_rows.at(k).second.at(j)) / divisor;
+    //                 // std::cout << prev_num << " -> " << row.at(j) << " at position " << row_num << ", " << j << "." << std::endl;
 
-                    if(row_num == k + 1 && j == k + 1){
-                        std::cout << "stored " << row.at(j) << std::endl;
-                    }
+    //                 if(row_num == k + 1 && j == k + 1){
+    //                     std::cout << "stored " << row.at(j) << std::endl;
+    //                 }
 
 
                     
-                }
+    //             }
 
-                row.at(k) = 0;
-            }
-        });
+    //             row.at(k) = 0;
+    //         }
+    //     });
 
 
   
 
-        gathered_rows.clear();
+    //     gathered_rows.clear();
 
-        world.barrier();
-    }
+    //     world.barrier();
+    // }
 
-    double end = MPI_Wtime();
+    // double end = MPI_Wtime();
 
-    if (world.rank0()) {
-        std::cout << "Elapsed time: " << (end - start) << " seconds\n";
-    }
+    // if (world.rank0()) {
+    //     std::cout << "Elapsed time: " << (end - start) << " seconds\n";
+    // }
 
-    if(world.rank0()){
-        matrix.async_visit(n - 1, [](long long row_num, std::vector<long long>& row, bool flip){
-            if(flip){
-                row.at(row.size() - 1) = -1 * row.at(row.size() - 1);
-            }
-        }, flipSign);
-    }
+    // if(world.rank0()){
+    //     matrix.async_visit(n - 1, [](long long row_num, std::vector<long long>& row, bool flip){
+    //         if(flip){
+    //             row.at(row.size() - 1) = -1 * row.at(row.size() - 1);
+    //         }
+    //     }, flipSign);
+    // }
 
-    gathered_rows.clear();
-    matrix.gather(gathered_rows);
-    std::sort(gathered_rows.begin(), gathered_rows.end());
+    // gathered_rows.clear();
+    // matrix.gather(gathered_rows);
+    // std::sort(gathered_rows.begin(), gathered_rows.end());
 
-    if(world.rank0()){
-        std::cout << "-------------------" << std::endl;
-        for(std::pair<long long, std::vector<long long>> key_value : gathered_rows){
-            std::ostringstream oss;
-            for(long long num : key_value.second){
-                oss << num << ", ";
-            }
-            std::cout << oss.str() << std::endl;
-        }
-    }
+    // if(world.rank0()){
+    //     std::cout << "-------------------" << std::endl;
+    //     for(std::pair<long long, std::vector<long long>> key_value : gathered_rows){
+    //         std::ostringstream oss;
+    //         for(long long num : key_value.second){
+    //             oss << num << ", ";
+    //         }
+    //         std::cout << oss.str() << std::endl;
+    //     }
+    // }
 
-    return 0;
+    // return 0;
 
     /*
         Questions:
@@ -328,7 +341,6 @@ int main(int argc, char** argv){
 
         copying the entire matrix is inefficient, thus instead use asynchronous communication with 
         barrier to ensure that all asynchronous operations are completed
-        implement barrier
         
 
     */
