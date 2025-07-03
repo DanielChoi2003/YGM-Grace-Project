@@ -87,7 +87,9 @@ int main(int argc, char** argv) {
 
   #ifdef CSV_READER
 
-  std::vector<std::string> filenames = {"../src/com-youtube.csv"};
+  std::vector<std::string> filenames = {"../data/com-youtube.csv"};
+
+  
 
   ygm::io::csv_parser parser(world, filenames);
   parser.for_all([](ygm::io::detail::csv_line line){
@@ -105,7 +107,8 @@ int main(int argc, char** argv) {
     // need to exclude duplicate from being added since 
     // this graph is undirected
     add_edge(s_graph, vertex_one, vertex_two);
-   });
+  });
+  
 
   world.barrier();
 
@@ -164,7 +167,7 @@ int main(int argc, char** argv) {
 
   int global_count = ygm::all_reduce(local_count, aggregator, world);
 
-  world.cout0("total_edges: ", global_count); // divide it by two, if its undirected
+  world.cout0("total_edges: ", global_count / 2); // divide it by two, if its undirected
 
   /* STEP 2: 2-Core Decomposition; Remove nodes that are not part of triangles
            This was disabled for triangle centrality because all nodes have to be 
@@ -172,61 +175,61 @@ int main(int argc, char** argv) {
 */
 
 
-//   static bool no_local_marked = false;
-//   static bool global_decomp = false;
+  static bool no_local_marked = false;
+  static bool global_decomp = false;
 
-//   global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
-//         return a && b;
-//     });
+  global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
+        return a && b;
+    });
 
-//   while(!global_decomp){
+  while(!global_decomp){
 
-//     no_local_marked = true; // assume that there is no marked vertex yet
-//     graph.for_all([](int source, vert_info& vi){
+    no_local_marked = true; // assume that there is no marked vertex yet
+    graph.for_all([](int source, vert_info& vi){
     
-//         // 1. each process computes its local vertices' degree
-//         // 2. each process then identifies vertices with degree less than 2
-//         // 3. remove the marked vertices and other processes that own the removed
-//         //    vertices will have to update the degree
-//         // 4. Repeat until all processes don't have any marked vertices
+        // 1. each process computes its local vertices' degree
+        // 2. each process then identifies vertices with degree less than 2
+        // 3. remove the marked vertices and other processes that own the removed
+        //    vertices will have to update the degree
+        // 4. Repeat until all processes don't have any marked vertices
 
-//         if(vi.adj.size() < 2){
+        if(vi.adj.size() < 2){
 
-//             // how to find which process owns node that are connected to this soon-to-be deleted node?
+            // how to find which process owns node that are connected to this soon-to-be deleted node?
 
-//             // 1. go through the deleted node's adjacency list -> async_visit(every node in the list, deleted node as a parameter)
-//             // 2. the process that owns that node will go through its adjacency list and remove the deleted node
+            // 1. go through the deleted node's adjacency list -> async_visit(every node in the list, deleted node as a parameter)
+            // 2. the process that owns that node will go through its adjacency list and remove the deleted node
 
-//             // it may send a request to a node that had already been deleted -> segmentation fault
-//             // it may create a new key-value pair
-//             for(auto neighbor : vi.adj){
+            // it may send a request to a node that had already been deleted -> segmentation fault
+            // it may create a new key-value pair
+            for(auto neighbor : vi.adj){
 
-//                 auto remover = [](int source2, vert_info& vi2, int source){
-//                     //s_world.cerr("Running remover on ", source2, " for neighbor ", source);
+                auto remover = [](int source2, vert_info& vi2, int source){
+                    //s_world.cerr("Running remover on ", source2, " for neighbor ", source);
 
-//                     auto it = std::find(vi2.adj.begin(), vi2.adj.end(), source);
-//                     if (it != vi2.adj.end()) {
-//                         vi2.adj.erase(it);
-//                     }
-//                     //s_world.cout("Erased node ", source, " from Node ", source2, "'s adjacency list");
-//                 };
+                    auto it = std::find(vi2.adj.begin(), vi2.adj.end(), source);
+                    if (it != vi2.adj.end()) {
+                        vi2.adj.erase(it);
+                    }
+                    //s_world.cout("Erased node ", source, " from Node ", source2, "'s adjacency list");
+                };
 
-//                 s_graph.async_visit(neighbor, remover, source);
-//             }
+                s_graph.async_visit(neighbor, remover, source);
+            }
 
-//             no_local_marked = false;
+            no_local_marked = false;
 
-//             // difference between erase and async_erase?
-//             s_graph.async_erase(source);
-//         }
+            // difference between erase and async_erase?
+            s_graph.async_erase(source);
+        }
 
 
-//     });
+    });
 
-//     global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
-//         return a && b;
-//     });
-//   }
+    global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
+        return a && b;
+    });
+  }
 
   double start = MPI_Wtime();
 
