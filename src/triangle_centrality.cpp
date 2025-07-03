@@ -22,19 +22,18 @@ struct vert_info {
   // i assume this determines what data is package when it is sent to another rank
   void serialize( Archive & ar )
   {
-    ar(dist, adj, degree);
+    ar(adj, degree);
   }
 
-  int dist = std::numeric_limits<int>::max();
-  std::set<int> unedited_adj;
   std::set<int> adj;
 
-  int degree = 0;
+  //int degree = 0;
+  int marked = 0;
   int triangle_count = 0;
   std::set<int> triangle_neighbors;
+
   int core_count = 0;
   int non_core_count = 0;
-
   // sum of non-core and core (from all neighbors)
   int total_count = 0;
 
@@ -50,9 +49,8 @@ void add_edge(graph_type& graph,
               int src, int dest) {
 
   auto inserter = [](int src, vert_info& vi, int dest) {
-    vi.unedited_adj.insert(dest);
     vi.adj.insert(dest);
-    vi.degree = vi.adj.size();
+    // vi.degree = vi.adj.size();
   };
 
   graph.async_visit(src, inserter, dest);
@@ -87,7 +85,7 @@ int main(int argc, char** argv) {
 
   #ifdef CSV_READER
 
-  std::vector<std::string> filenames = {"../data/com-youtube.csv"};
+  std::vector<std::string> filenames = {"../data/zachary_karate.csv"};
 
   
 
@@ -169,67 +167,70 @@ int main(int argc, char** argv) {
 
   world.cout0("total_edges: ", global_count / 2); // divide it by two, if its undirected
 
+  world.barrier();
+
+
   /* STEP 2: 2-Core Decomposition; Remove nodes that are not part of triangles
-           This was disabled for triangle centrality because all nodes have to be 
-           evaluated and may affect other nodes' non-core and core counts (that's what I assumed)
+           This was disabled for triangle centrality because the original implementation did
+           not utilize this, but also we want all nodes to have a value of TC.
 */
 
 
-  static bool no_local_marked = false;
-  static bool global_decomp = false;
+  // static bool no_local_marked = false;
+  // static bool global_decomp = false;
 
-  global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
-        return a && b;
-    });
+  // global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
+  //       return a && b;
+  //   });
 
-  while(!global_decomp){
+  // while(!global_decomp){
 
-    no_local_marked = true; // assume that there is no marked vertex yet
-    graph.for_all([](int source, vert_info& vi){
+  //   no_local_marked = true; // assume that there is no marked vertex yet
+  //   graph.for_all([](int source, vert_info& vi){
     
-        // 1. each process computes its local vertices' degree
-        // 2. each process then identifies vertices with degree less than 2
-        // 3. remove the marked vertices and other processes that own the removed
-        //    vertices will have to update the degree
-        // 4. Repeat until all processes don't have any marked vertices
+  //       // 1. each process computes its local vertices' degree
+  //       // 2. each process then identifies vertices with degree less than 2
+  //       // 3. remove the marked vertices and other processes that own the removed
+  //       //    vertices will have to update the degree
+  //       // 4. Repeat until all processes don't have any marked vertices
 
-        if(vi.adj.size() < 2){
+  //       if(vi.adj.size() < 2){
 
-            // how to find which process owns node that are connected to this soon-to-be deleted node?
+  //           // how to find which process owns node that are connected to this soon-to-be deleted node?
 
-            // 1. go through the deleted node's adjacency list -> async_visit(every node in the list, deleted node as a parameter)
-            // 2. the process that owns that node will go through its adjacency list and remove the deleted node
+  //           // 1. go through the deleted node's adjacency list -> async_visit(every node in the list, deleted node as a parameter)
+  //           // 2. the process that owns that node will go through its adjacency list and remove the deleted node
 
-            // it may send a request to a node that had already been deleted -> segmentation fault
-            // it may create a new key-value pair
-            for(auto neighbor : vi.adj){
+  //           // it may send a request to a node that had already been deleted -> segmentation fault
+  //           // it may create a new key-value pair
+  //           for(auto neighbor : vi.adj){
 
-                auto remover = [](int source2, vert_info& vi2, int source){
-                    //s_world.cerr("Running remover on ", source2, " for neighbor ", source);
+  //               auto remover = [](int source2, vert_info& vi2, int source){
+  //                   //s_world.cerr("Running remover on ", source2, " for neighbor ", source);
 
-                    auto it = std::find(vi2.adj.begin(), vi2.adj.end(), source);
-                    if (it != vi2.adj.end()) {
-                        vi2.adj.erase(it);
-                    }
-                    //s_world.cout("Erased node ", source, " from Node ", source2, "'s adjacency list");
-                };
+  //                   auto it = std::find(vi2.adj.begin(), vi2.adj.end(), source);
+  //                   if (it != vi2.adj.end()) {
+  //                       vi2.adj.erase(it);
+  //                   }
+  //                   //s_world.cout("Erased node ", source, " from Node ", source2, "'s adjacency list");
+  //               };
 
-                s_graph.async_visit(neighbor, remover, source);
-            }
+  //               s_graph.async_visit(neighbor, remover, source);
+  //           }
 
-            no_local_marked = false;
+  //           no_local_marked = false;
 
-            // difference between erase and async_erase?
-            s_graph.async_erase(source);
-        }
+  //           // difference between erase and async_erase?
+  //           s_graph.async_erase(source);
+  //       }
 
 
-    });
+  //   });
 
-    global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
-        return a && b;
-    });
-  }
+  //   global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
+  //       return a && b;
+  //   });
+  // }
 
   double start = MPI_Wtime();
 
@@ -239,6 +240,8 @@ int main(int argc, char** argv) {
     STEP 3: direct the edge from low degree vertex to high degree vertex (convert undirected graph into 
     degree-ordered graph)
     since this is a simple implemenation, for equal degree vertex, break the tie with higher vertex number
+
+    This can be used to speed the processing time (not included in the runtime)
   */
    
 
@@ -278,11 +281,7 @@ int main(int argc, char** argv) {
   //       s_graph.async_visit(neighbor, edgeRemover, vi.degree, source);
   //   }
   // });
-
-  world.barrier();
-
- 
-  
+   
   /*
     STEP 4: each vertex gets a list of triangle neighbors 
             (neighbors that make up triangles with the target vertex)
@@ -441,19 +440,34 @@ int main(int argc, char** argv) {
 }
 
 
-// Questions:
-// 1. capturing integer in lambda is causing segmentation fault
-//      A:  Not allowed in this version; it needs to be updated with the most recent version
-// 2. how to ensure sequential printing
-//      A: it is not possible since print is asynchronous (you cannot guarantee any kind of ordering)
-// 3. difference between erase and async_erase -> erase does not exist for ygm::containers
-// 4. does async_visit create a new key if it did not exist in ygm::map?
-//      A: async_visit_if_contains
-// 5. barrier does not influence / determine the behavior of async operations?
-//      A: it cannot 
+/*
+  TriangleNeighbor Algorithm:
 
-// 1. update to v0.8
-// 2. pull from the most recent YGM
-// 3. use the YGM/project-template repo
-//
+  graph.for_all([](int vert, vert_info& vi){
+
+
+  })
+
+
+*/
+
+
+/*
+  TC Algorithm 2:
+
+  Call TriangleNeighbor
+
+  for vertex "v" in V (graph):
+    for triangle neighbor "u" in L(v):
+      X(v) += triangle count of u
+    x = X(v) + triangle count of v  // triangle count from neighbor and itself
+
+    for neighbor "u" (any type) in N(v):
+      s += triangle count of "u"
+    
+    y (non-core sum) = s - x + triangle count of itself
+
+    TC(v) = (1/3 * x + y) / total num of triangle
+
+*/
 
