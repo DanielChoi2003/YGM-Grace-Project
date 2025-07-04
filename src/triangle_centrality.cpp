@@ -22,15 +22,17 @@ struct vert_info {
   // i assume this determines what data is package when it is sent to another rank
   void serialize( Archive & ar )
   {
-    ar(adj, degree);
+    ar(low_adj, high_adj);
   }
 
-  std::set<int> adj;
+  std::vector<int> adj;
+  std::vector<int> low_adj;
+  std::vector<int> high_adj;
 
   //int degree = 0;
   int marked = 0;
   int triangle_count = 0;
-  std::set<int> triangle_neighbors;
+  std::vector<int> triangle_neighbors;
 
   int core_count = 0;
   int non_core_count = 0;
@@ -49,7 +51,16 @@ void add_edge(graph_type& graph,
               int src, int dest) {
 
   auto inserter = [](int src, vert_info& vi, int dest) {
-    vi.adj.insert(dest);
+
+    if(dest > src){
+      vi.high_adj.push_back(dest);
+    }
+    else{
+      vi.low_adj.push_back(dest);
+    }
+
+    vi.adj.push_back(dest);
+
     // vi.degree = vi.adj.size();
   };
 
@@ -160,7 +171,8 @@ int main(int argc, char** argv) {
   static int local_count = 0;
 
   graph.for_all([](int src, vert_info& vi){
-    local_count += vi.adj.size();
+    local_count += vi.low_adj.size() + vi.high_adj.size();
+
   });
 
   int global_count = ygm::all_reduce(local_count, aggregator, world);
@@ -290,47 +302,67 @@ int main(int argc, char** argv) {
 
   graph.for_all([](int v_node, vert_info& vi){
    
-      // QUESTION: capturing vert in checker led to segmentation fault?
-    for(auto u_node : vi.adj){
-      //s_world.cerr("Visiting ", u_node, " from ", vert);
-      auto checker = [](const int u_node, vert_info& vi2, int v_node, std::set<int> adj){
-        for(auto w_node : vi2.adj){
-          // does w_node exist in the adjacency list of the source node?
-          if(std::find(adj.begin(), adj.end(), w_node) != adj.end()){
-            //s_world.cout("Triangle found: ", v_node, " -> ", u_node, " -> ", w_node);
-            local_triangle_number++;
-            // incrementing node_1's vertex triangle count
-            vi2.triangle_count++;
-            vi2.triangle_neighbors.insert(v_node);
-            vi2.triangle_neighbors.insert(w_node);
+    // mark the neighbor with higher ID
+    for(auto u_node : vi.high_adj){
 
-
-            // make a function that increments source and w_node's triangle_count
-            // and adds neighbors to the list
-            auto updater = [](int target, vert_info& vi3, int neighbor1, int neighbor2){
-                vi3.triangle_count++;
-                vi3.triangle_neighbors.insert(neighbor1);
-                vi3.triangle_neighbors.insert(neighbor2);
-            };
-            s_graph.async_visit(v_node, updater, u_node, w_node);
-            s_graph.async_visit(w_node, updater, v_node, u_node);
-
-            // need to increment the triangle_count for 3 nodes
-          }
-        }
+      auto marker = [](int u_node, vert_info& vi){
+        vi.marked++;
       };
 
-      s_graph.async_visit(u_node, checker, v_node, vi.adj);
+      s_graph.async_visit(u_node, marker);
+    }
+  });
+
+  world.barrier();
+
+  graph.for_all([](int v_node, vert_info& vi){
+   
+    // for every neighbor with lower ID than v_node
+    for(auto u_node : vi.low_adj){
+
+      auto outer_checker = [=](int u_node, vert_info& vi){
+        for(auto w_node : vi.high_adj){
+          
+          // if the w_node is marked, that is one triangle
+          auto inner_checker = [=](int w_node, vert_info& vi){
+            
+            if(vi.marked > 0){
+              // increment the triangle for all u, v, w, and local_total_triangle
+
+              local_triangle_number++;
+
+              // add the neighbors to triangle neighbor vector
+              auto add_neighbor = [=](int vert, vert_info& vi, int v1, int v2){
+
+                vi.triangle_count++;
+
+                vi.triangle_neighbors.push_back(v1);
+                vi.triangle_neighbors.push_back(v2);
+              };
+
+              s_graph.async_visit(v_node, add_neighbor, u_node, w_node);
+              s_graph.async_visit(u_node, add_neighbor, v_node, w_node);
+              s_graph.async_visit(w_node, add_neighbor, v_node, u_node);
+
+            }
+          };
+        }
+      };
     }
 
+    // unmark them
+    for(auto u_node : vi.high_adj){
+      auto unmarker = [](int u_node, vert_info& vi){
+        vi.marked--;
+      };
+
+      s_graph.async_visit(u_node, unmarker);
+    }
   });
 
   world.barrier();
 
   global_triangle_number = ygm::all_reduce(local_triangle_number, aggregator, world);
-
-  world.barrier();
-
 
   // for every vertex v, get a list of triangle neighbors (implement in the code above)
   // and using that list here (after all nodes got their vertex triangle count),
@@ -369,7 +401,7 @@ int main(int argc, char** argv) {
 
   graph.for_all([](int vert, vert_info& vi){
      // calculate total triangle count here
-    for(int neighbor_any : vi.unedited_adj){
+    for(int neighbor_any : vi.adj){
       
       // add triangle count from neighbors even if they are not in the same triangle as the vertex v
       auto instructVert = [](int neighbor, vert_info& neighbor_vi, int target_v){
