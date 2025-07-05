@@ -175,61 +175,61 @@ int main(int argc, char** argv) {
 */
 
 
-  static bool no_local_marked = false;
-  static bool global_decomp = false;
+  // static bool no_local_marked = false;
+  // static bool global_decomp = false;
 
-  global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
-        return a && b;
-    });
+  // global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
+  //       return a && b;
+  //   });
 
-  while(!global_decomp){
+  // while(!global_decomp){
 
-    no_local_marked = true; // assume that there is no marked vertex yet
-    graph.for_all([](int source, vert_info& vi){
+  //   no_local_marked = true; // assume that there is no marked vertex yet
+  //   graph.for_all([](int source, vert_info& vi){
     
-        // 1. each process computes its local vertices' degree
-        // 2. each process then identifies vertices with degree less than 2
-        // 3. remove the marked vertices and other processes that own the removed
-        //    vertices will have to update the degree
-        // 4. Repeat until all processes don't have any marked vertices
+  //       // 1. each process computes its local vertices' degree
+  //       // 2. each process then identifies vertices with degree less than 2
+  //       // 3. remove the marked vertices and other processes that own the removed
+  //       //    vertices will have to update the degree
+  //       // 4. Repeat until all processes don't have any marked vertices
 
-        if(vi.adj.size() < 2){
+  //       if(vi.adj.size() < 2){
 
-            // how to find which process owns node that are connected to this soon-to-be deleted node?
+  //           // how to find which process owns node that are connected to this soon-to-be deleted node?
 
-            // 1. go through the deleted node's adjacency list -> async_visit(every node in the list, deleted node as a parameter)
-            // 2. the process that owns that node will go through its adjacency list and remove the deleted node
+  //           // 1. go through the deleted node's adjacency list -> async_visit(every node in the list, deleted node as a parameter)
+  //           // 2. the process that owns that node will go through its adjacency list and remove the deleted node
 
-            // it may send a request to a node that had already been deleted -> segmentation fault
-            // it may create a new key-value pair
-            for(auto neighbor : vi.adj){
+  //           // it may send a request to a node that had already been deleted -> segmentation fault
+  //           // it may create a new key-value pair
+  //           for(auto neighbor : vi.adj){
 
-                auto remover = [](int source2, vert_info& vi2, int source){
-                    //s_world.cerr("Running remover on ", source2, " for neighbor ", source);
+  //               auto remover = [](int source2, vert_info& vi2, int source){
+  //                   //s_world.cerr("Running remover on ", source2, " for neighbor ", source);
 
-                    auto it = std::find(vi2.adj.begin(), vi2.adj.end(), source);
-                    if (it != vi2.adj.end()) {
-                        vi2.adj.erase(it);
-                    }
-                    //s_world.cout("Erased node ", source, " from Node ", source2, "'s adjacency list");
-                };
+  //                   auto it = std::find(vi2.adj.begin(), vi2.adj.end(), source);
+  //                   if (it != vi2.adj.end()) {
+  //                       vi2.adj.erase(it);
+  //                   }
+  //                   //s_world.cout("Erased node ", source, " from Node ", source2, "'s adjacency list");
+  //               };
 
-                s_graph.async_visit(neighbor, remover, source);
-            }
+  //               s_graph.async_visit(neighbor, remover, source);
+  //           }
 
-            no_local_marked = false;
+  //           no_local_marked = false;
 
-            // difference between erase and async_erase?
-            s_graph.async_erase(source);
-        }
+  //           // difference between erase and async_erase?
+  //           s_graph.async_erase(source);
+  //       }
 
 
-    });
+  //   });
 
-    global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
-        return a && b;
-    });
-  }
+  //   global_decomp = world.all_reduce(no_local_marked, [](bool a, bool b){
+  //       return a && b;
+  //   });
+  // }
 
   double start = MPI_Wtime();
 
@@ -242,42 +242,42 @@ int main(int argc, char** argv) {
   */
    
 
-  // graph.for_all([](int source, vert_info& vi){
-  //   // for(auto kv : graph)
+  graph.for_all([](int source, vert_info& vi){
+    // for(auto kv : graph)
     
-  //   // iterate through the node's adjacency list and compare its degree to
-  //   // degrees of node in the list. 
-  //   // 1. if its degree is larger, keep the edge
-  //   // 2. if its degree is smaller, remove it
-  //   // 3. if its degree is equal, remove the edge of the smaller vertex number
+    // iterate through the node's adjacency list and compare its degree to
+    // degrees of node in the list. 
+    // 1. if its degree is larger, keep the edge
+    // 2. if its degree is smaller, remove it
+    // 3. if its degree is equal, remove the edge of the smaller vertex number
 
-  //   for(auto neighbor : vi.adj){
+    for(auto neighbor : vi.adj){
         
-  //       auto edgeRemover = [](int source2, vert_info& vi2, int degree, int source){
-  //           if(vi2.degree < degree || (vi2.degree == degree && source2 < source)){
-  //               auto it = std::find(vi2.adj.begin(), vi2.adj.end(), source);
-  //               if (it != vi2.adj.end()) {
-  //                   vi2.adj.erase(it);
-  //               }
-  //           }
-  //           else if(vi2.degree > degree || (vi2.degree == degree && source < source2)){
+        auto edgeRemover = [](int source2, vert_info& vi2, int degree, int source){
+            if(vi2.degree < degree || (vi2.degree == degree && source2 < source)){
+                auto it = std::find(vi2.adj.begin(), vi2.adj.end(), source);
+                if (it != vi2.adj.end()) {
+                    vi2.adj.erase(it);
+                }
+            }
+            else if(vi2.degree > degree || (vi2.degree == degree && source < source2)){
 
-  //               auto sourceRemove = [](int source, vert_info& vi, int nodeToRemove){
-  //                   auto it = std::find(vi.adj.begin(), vi.adj.end(), nodeToRemove);
-  //                   if (it != vi.adj.end()) {
-  //                       vi.adj.erase(it);
-  //                   }
+                auto sourceRemove = [](int source, vert_info& vi, int nodeToRemove){
+                    auto it = std::find(vi.adj.begin(), vi.adj.end(), nodeToRemove);
+                    if (it != vi.adj.end()) {
+                        vi.adj.erase(it);
+                    }
 
-  //               };
+                };
 
-  //               s_graph.async_visit(source, sourceRemove, source2);
-  //           }
+                s_graph.async_visit(source, sourceRemove, source2);
+            }
 
-  //       };
+        };
 
-  //       s_graph.async_visit(neighbor, edgeRemover, vi.degree, source);
-  //   }
-  // });
+        s_graph.async_visit(neighbor, edgeRemover, vi.degree, source);
+    }
+  });
 
   world.barrier();
 
