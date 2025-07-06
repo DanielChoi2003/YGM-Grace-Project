@@ -114,12 +114,12 @@ int main(int argc, char** argv) {
 
   #endif
 
-  //#define random_graph
+  // #define random_graph
 
   #ifdef random_graph
 
-  const int total_edges = 1600000;
-  const int total_vertices = 100000;
+  const int total_edges = 	16000000;	
+  const int total_vertices = 1000000;
 
   std::random_device rd;  // a seed source for the random number engine
   std::mt19937 rng(world.rank());
