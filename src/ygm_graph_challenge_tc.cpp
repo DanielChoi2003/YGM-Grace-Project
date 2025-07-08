@@ -33,8 +33,12 @@ std::pair<std::string, std::string> parse_cmdline(int argc, char **argv,
 
   std::stringstream A_sstr, B_sstr;
 
-  A_sstr << "./data/A_G500_S" << A_scale << "_tc.edges";
-  B_sstr << "./data/B_G500_S" << B_scale << "_tc.edges";
+  
+  A_sstr << "./data/A_G500_S_testing_tc.edges";
+  B_sstr << "./data/B_G500_S_testing_tc.edges";
+
+  // A_sstr << "./data/A_G500_S" << A_scale << "_tc.edges";
+  // B_sstr << "./data/B_G500_S" << B_scale << "_tc.edges";
 
   comm.cout0("SCALE: ", scale);
   comm.cout0("Input A: ", A_sstr.str());
@@ -45,6 +49,8 @@ std::pair<std::string, std::string> parse_cmdline(int argc, char **argv,
 
 int main(int argc, char **argv) {
   ygm::comm world(&argc, &argv);
+
+  static ygm::comm& s_world = world;
   {
 
     world.cout0("YGM Graph Challenge -- Triangle Counting");
@@ -95,9 +101,9 @@ int main(int argc, char **argv) {
     //  Build dodgr edge list
     struct dodgr_edge {
       uint32_t source;  // local row index
+      uint32_t global_source; // actual source vertex ID
       uint64_t dest;
       uint32_t dest_degree;
-      uint64_t triangle_count; // MY EDIT
     } __attribute__((packed)); // tells the compiler to not add byte padding between the data members
     static std::deque<dodgr_edge> dodgr_edges_1d; // degree order directed graph
     world.cf_barrier();
@@ -141,8 +147,9 @@ int main(int argc, char **argv) {
               dodgr_edges_1d.push_back({
                   uint32_t(source / s_world_size), // what is the reason?
                   target,
-                  target_degree,
+                  target_degree
               });
+              s_world.cout(source, "->", target);
             },
             source, target, target_degree);
       }
@@ -189,12 +196,20 @@ int main(int argc, char **argv) {
     double wc_time_start = MPI_Wtime();
     size_t global_wedge_checks(0);
     static size_t global_triangles_found(0);
+    /*
+      original vertex node number: source
+      owner of the vertex: source % world.size
+      dodgr_edges_1d[i].source = local edge list's index
+
+      so "source" here is simply the index
+      "dest" here is the actual destination vertex number
+    */
     for (size_t i = 0; i < dodgr_edges_1d.size(); ++i) {
-      uint64_t t_i = dodgr_edges_1d[i].source;
+      uint64_t t_i = dodgr_edges_1d[i].source; // local?
       uint64_t t_j = dodgr_edges_1d[i].dest;
       uint64_t t_j_deg = dodgr_edges_1d[i].dest_degree;
       for (size_t j = i + 1; j < dodgr_edges_1d.size(); ++j) {
-        if (t_i == dodgr_edges_1d[j].source) {
+        if (t_i == dodgr_edges_1d[j].source) { // this is comparing the local edge list index, but if index is equal == the source vertex is equal
           uint64_t t_k = dodgr_edges_1d[j].dest;
           uint64_t t_k_deg = dodgr_edges_1d[j].dest_degree;
           global_wedge_checks++;
@@ -229,12 +244,18 @@ int main(int argc, char **argv) {
           /*  MY EDIT
             Need to increment the other two vertices' local triangle count
 
-
             The problem arises when we have to get the sum of total triangle count because originally, it was 
             implemented with an undirected graph. but need to figure a way with the degree order directed graph.
           
+            How to get the core count of a vertex? 
+            Adding triangle count as triangle is found leads to overcounting. If a neighboring vertex participates in
+            two triangles, it will count double
+
+            First, it needs to gather triangle counts for all vertices.
+            Second, gather all triangle neighbors.
+              Call the neighbors and make the neighbors add to the calling vertex's core count
           */
-          world.async(query_dest_rank, [p]() { // difference from async_visit?
+          world.async(query_dest_rank, [p, t_i, t_j, t_k]() { // difference from async_visit?
             size_t local_row_index = p.query_source;
             if (local_row_index <= local_largest_vertex) {
               // lower_bound finds the first occurrence of val or a value that is greater if the exact "val" is not found
@@ -249,6 +270,8 @@ int main(int argc, char **argv) {
                              row_jump_index[local_row_index + 1] &&
                   *itr == p.query_target) {
                 global_triangles_found++; // found a triangle!
+
+                s_world.cout("triangle found: ", t_i, " -> ", t_j, " -> ", t_k);
 
                 /*
                   increment the local triangle count for:
@@ -290,3 +313,11 @@ int main(int argc, char **argv) {
   }
   return 0;
 }
+
+/*
+  Questions:
+  1. How to confirm correctness?
+  2. How to ensure the completion of nested async?
+  3. How to get the original source back? To get the triangle centrality, I need the original source vertex.
+    Add the global source ID into dodgr?
+*/
