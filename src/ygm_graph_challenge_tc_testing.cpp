@@ -30,6 +30,22 @@ struct vert_info{
 };
 
 
+using graph_type = ygm::container::map<int, vert_info >;
+
+void add_edge(graph_type& graph,
+              int src, int dest) {
+
+  auto inserter = [](int src, vert_info& vi, int dest) {
+    vi.unedited_adj.insert(dest);
+    vi.adj.insert(dest);
+    vi.degree = vi.adj.size();
+  };
+
+  graph.async_visit(src, inserter, dest);
+  graph.async_visit(dest, inserter, src);
+}
+
+
 // finds the appropriate graph files based on the user input
 std::pair<std::string, std::string> parse_cmdline(int argc, char **argv,
                                                   ygm::comm &comm) {
