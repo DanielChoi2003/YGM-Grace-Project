@@ -10,6 +10,24 @@
 #include <ygm-gctc/kronecker_edge_generator.hpp>
 #include <ygm/comm.hpp>
 #include <ygm/container/counting_set.hpp>
+#include <ygm/container/map.hpp>
+#include <set>
+
+  // IMPORTANT: need to make triangle_neighbor a set due to duplicates
+    // OR, filter it later with unordered set. but what is more efficient?
+struct vert_info{
+    template <class Archive>
+    void serialize( Archive & ar )
+    {
+      ar(triangle_count, core_count, noncore_count, total_count, triangle_neighbor, triangle_centrality);
+    }
+      uint64_t triangle_count = 0;
+      uint64_t core_count = 0;
+      uint64_t noncore_count = 0;
+      uint64_t total_count = 0;
+      std::vector<uint64_t> triangle_neighbor;
+      double triangle_centrality = 0;
+};
 
 
 // finds the appropriate graph files based on the user input
@@ -34,11 +52,11 @@ std::pair<std::string, std::string> parse_cmdline(int argc, char **argv,
   std::stringstream A_sstr, B_sstr;
 
   
-  A_sstr << "./data/A_G500_S_testing_tc.edges";
-  B_sstr << "./data/B_G500_S_testing_tc.edges";
+  // A_sstr << "./data/A_G500_S_testing_tc.edges";
+  // B_sstr << "./data/B_G500_S_testing_tc.edges";
 
-  // A_sstr << "./data/A_G500_S" << A_scale << "_tc.edges";
-  // B_sstr << "./data/B_G500_S" << B_scale << "_tc.edges";
+  A_sstr << "./data/A_G500_S" << A_scale << "_tc.edges";
+  B_sstr << "./data/B_G500_S" << B_scale << "_tc.edges";
 
   comm.cout0("SCALE: ", scale);
   comm.cout0("Input A: ", A_sstr.str());
@@ -97,13 +115,16 @@ int main(int argc, char **argv) {
     world.cout0("map_my_vertices.size() = ", map_my_vertices.size());
     world.cout0("Degree Count Time = ", cd_time_end - cd_time_start);
 
+    
+    ygm::container::map<uint64_t, vert_info> vertex_map(world);
+    static ygm::container::map<uint64_t, vert_info>& s_vertex_map = vertex_map;
     //
     //  Build dodgr edge list
     struct dodgr_edge {
-      uint32_t source;  // local row index
-      uint32_t global_source; // actual source vertex ID
+      uint64_t source;  // local row index
+      uint64_t global_source; // actual source vertex ID
       uint64_t dest;
-      uint32_t dest_degree;
+      uint64_t dest_degree;
     } __attribute__((packed)); // tells the compiler to not add byte padding between the data members
     static std::deque<dodgr_edge> dodgr_edges_1d; // degree order directed graph
     world.cf_barrier();
@@ -116,8 +137,11 @@ int main(int argc, char **argv) {
         uint64_t row_degree = map_my_vertices[row];
         uint64_t col_degree = map_my_vertices[col];
         uint64_t source(0);
+        uint64_t global_source(0);
         uint64_t target(0);
-        uint32_t target_degree(0);
+        uint64_t target_degree(0);
+
+        
         if (row_degree > col_degree) { // the edge redirected towards the higher degree vertex
           source = col;
           target = row;
@@ -139,19 +163,24 @@ int main(int argc, char **argv) {
             std::cout << "Found a self edge!?!?!" << std::endl;
           }
         }
+        //s_world.cout(source, "->", target);
 
         // to a rank (source % world.size())
         world.async(
             source % world.size(),
-            [](uint64_t source, uint64_t target, uint32_t target_degree) {
+            [](uint64_t source, uint64_t target, uint64_t target_degree) {
               dodgr_edges_1d.push_back({
-                  uint32_t(source / s_world_size), // what is the reason?
+                  uint64_t(source / s_world_size),
+                  source,
                   target,
                   target_degree
               });
-              s_world.cout(source, "->", target);
             },
             source, target, target_degree);
+
+        vert_info vi;
+        s_vertex_map.async_insert(source, vi);
+        s_vertex_map.async_insert(target, vi);       
       }
     });
     world.barrier();
@@ -167,14 +196,14 @@ int main(int argc, char **argv) {
     int64_t cur_row = 0;
     row_jump_index.push_back(0);
     for (size_t i = 0; i < dodgr_edges_1d.size(); ++i) {
-      size_t local_row_index = dodgr_edges_1d[i].source;
+      size_t local_row_index = dodgr_edges_1d[i].source; // source here is the index
       while (local_row_index > cur_row) { // For any vertex u, where do its edges begin in the edge list?
         ++cur_row;
         row_jump_index.push_back(i);
         YGM_ASSERT_RELEASE(cur_row == row_jump_index.size() - 1);
       }
     }
-    static size_t local_largest_vertex = dodgr_edges_1d.back().source;
+    static size_t local_largest_vertex = dodgr_edges_1d.back().source; // not actually the largest vertex ID; largest index
     row_jump_index.push_back(dodgr_edges_1d.size()); // padding to make accessing safe
     row_jump_index.push_back(dodgr_edges_1d.size());
     row_jump_index.push_back(dodgr_edges_1d.size());
@@ -206,6 +235,7 @@ int main(int argc, char **argv) {
     */
     for (size_t i = 0; i < dodgr_edges_1d.size(); ++i) {
       uint64_t t_i = dodgr_edges_1d[i].source; // local?
+      uint64_t global_t_i = dodgr_edges_1d[i].global_source;
       uint64_t t_j = dodgr_edges_1d[i].dest;
       uint64_t t_j_deg = dodgr_edges_1d[i].dest_degree;
       for (size_t j = i + 1; j < dodgr_edges_1d.size(); ++j) {
@@ -214,10 +244,12 @@ int main(int argc, char **argv) {
           uint64_t t_k_deg = dodgr_edges_1d[j].dest_degree;
           global_wedge_checks++;
 
+          int query_source_rank = 0;
           int query_dest_rank = 0;
 
           struct packed {
-            uint32_t query_source;
+            uint64_t query_source;
+            uint64_t query_global_source;
             uint64_t query_target;
           } __attribute__((packed));
 
@@ -225,20 +257,28 @@ int main(int argc, char **argv) {
 
           if (t_j_deg < t_k_deg) {  // mark the higher degree vertex as the destination
             p.query_source = t_j / s_world_size;
+            p.query_global_source = t_j;
             p.query_target = t_k;
-            query_dest_rank = t_j % s_world_size;
+            query_source_rank = t_j % s_world_size;
+            query_dest_rank = t_k % s_world_size;
           } else if (t_j_deg > t_k_deg) {
             p.query_source = t_k / s_world_size;
+            p.query_global_source = t_k;
             p.query_target = t_j;
-            query_dest_rank = t_k % s_world_size;
+            query_source_rank = t_k % s_world_size;
+            query_dest_rank = t_j % s_world_size;
           } else if (t_j < t_k) { // if the degree is equal, break the tie with vertex number
             p.query_source = t_j / s_world_size;
+             p.query_global_source = t_j;
             p.query_target = t_k;
-            query_dest_rank = t_j % s_world_size;
+            query_source_rank = t_j % s_world_size;
+            query_dest_rank = t_k % s_world_size;
           } else {
             p.query_source = t_k / s_world_size;
+             p.query_global_source = t_k;
             p.query_target = t_j;
-            query_dest_rank = t_k % s_world_size;
+            query_source_rank = t_k % s_world_size;
+            query_dest_rank = t_j % s_world_size;
           }
 
           /*  MY EDIT
@@ -255,7 +295,7 @@ int main(int argc, char **argv) {
             Second, gather all triangle neighbors.
               Call the neighbors and make the neighbors add to the calling vertex's core count
           */
-          world.async(query_dest_rank, [p, t_i, t_j, t_k]() { // difference from async_visit?
+          world.async(query_source_rank, [p, global_t_i]() { // difference from async_visit?
             size_t local_row_index = p.query_source;
             if (local_row_index <= local_largest_vertex) {
               // lower_bound finds the first occurrence of val or a value that is greater if the exact "val" is not found
@@ -271,14 +311,16 @@ int main(int argc, char **argv) {
                   *itr == p.query_target) {
                 global_triangles_found++; // found a triangle!
 
-                s_world.cout("triangle found: ", t_i, " -> ", t_j, " -> ", t_k);
 
-                /*
-                  increment the local triangle count for:
-                  t_i, t_j, t_k
-
-                */
-
+                auto updater = [](uint64_t dest, vert_info& vi, uint64_t neighbor1, uint64_t neighbor2){
+                  vi.triangle_count++;
+                  vi.triangle_neighbor.push_back(neighbor1);
+                  vi.triangle_neighbor.push_back(neighbor2);
+                };  
+                s_vertex_map.async_visit(p.query_global_source, updater, p.query_target, global_t_i);
+                s_vertex_map.async_visit(p.query_target, updater, p.query_global_source, global_t_i);
+                s_vertex_map.async_visit(global_t_i, updater, p.query_global_source, p.query_target);
+              
               }
             }
           });
@@ -290,7 +332,6 @@ int main(int argc, char **argv) {
     world.barrier();
     world.stats_print("TC_TIME");
     double wc_time_end = MPI_Wtime();
-
     world.barrier();
     global_wedge_checks = ygm::sum(global_wedge_checks, world);
     global_triangles_found = ygm::sum(global_triangles_found, world);
@@ -307,9 +348,96 @@ int main(int argc, char **argv) {
     }
     world.barrier();
 
+    double tc_time_start = MPI_Wtime();
 
-    //
-    // get the core, non-core, and total triangle count
+
+    // local triangle count vector to store triangle counting
+    static std::unordered_map<uint64_t, uint64_t> count_map;
+    
+    // NOTE: might need to run over the query_dest too. If query dest is a high-degree vertex,
+    //      then it might not belong in any rank's dodgr_edges_1d as a source. 
+    vertex_map.for_all([](int source, vert_info& vi){
+
+      uint64_t triangle_count = vi.triangle_count;
+      s_world.async(source % s_world_size, [source, triangle_count](){
+        count_map.insert({source, triangle_count});
+      });
+      vi.core_count += vi.triangle_count;
+      std::unordered_set<uint64_t> visited_neighbors; // triangle_neighbors may contain duplicates. this is to filter them out
+
+      for(uint64_t neighbor : vi.triangle_neighbor){
+        visited_neighbors.insert(neighbor);
+      }
+
+      for(uint64_t neighbor : visited_neighbors){
+        auto adder = [source](int dest, vert_info& vi){
+
+          uint64_t dest_count = vi.triangle_count;
+
+          s_vertex_map.async_visit(source, [](int source, vert_info& vi, uint64_t dest_count){
+            vi.core_count += dest_count;
+          }, dest_count);
+        };
+
+        s_vertex_map.async_visit(neighbor, adder);
+      }
+    });
+    world.barrier();
+
+    /*
+      The method is to call the dest vertex, add the source vertex's triangle count, 
+      and then let it add its triangle count to the source vertex with a nested async
+    */
+    for(size_t i = 0; i < dodgr_edges_1d.size(); i++){
+      uint64_t global_source = dodgr_edges_1d[i].global_source;
+      uint64_t dest = dodgr_edges_1d[i].dest;
+
+      uint64_t src_count = count_map.at(global_source);
+
+      vertex_map.async_visit(dest, [src_count](uint64_t dest, vert_info& vi, uint64_t src){
+
+        uint64_t dest_count = vi.triangle_count;
+        vi.total_count += src_count;
+        
+        auto adder = [](uint64_t src, vert_info& vi, uint64_t dest_count){
+          vi.total_count += dest_count;
+
+        };
+
+        s_vertex_map.async_visit(src, adder, dest_count);
+      }, global_source);
+
+    }
+    world.barrier();
+
+    // this might repeat the source vertex. if it has already been processed, then skip
+    static double local_max_TC = 0;
+
+    vertex_map.for_all([](uint64_t source, vert_info& vi){
+      uint64_t total_count = vi.total_count;
+      uint64_t core_count = vi.core_count;
+
+      vi.noncore_count = total_count - core_count + vi.triangle_count;
+      uint64_t noncore_count = vi.noncore_count;
+      //std::cout << "vertex " << global_source << ", core count: " << core_count << ", total count: " << total_count 
+                //<< ", noncore_count: " << noncore_count << std::endl;
+      vi.triangle_centrality = ((1.0 / 3) * core_count + noncore_count) / global_triangles_found;
+      //std::cout << "vertex " << global_source << " has a triangle centrality of " << it->second.triangle_centrality << std::endl;
+      if(vi.triangle_centrality > local_max_TC){
+        local_max_TC = vi.triangle_centrality;
+      }
+      // if(vi.triangle_centrality >= 1){
+      //   std::cout << "vertex " << source << ", core count: " << core_count << ", total count: " << total_count 
+      //           << ", noncore_count: " << noncore_count << std::endl;
+      // }
+    });
+
+    world.barrier();
+    double global_max_TC = world.all_reduce_max(local_max_TC);
+    world.cout0("max triangle centrality: ", global_max_TC);
+    world.barrier();
+    double tc_time_end = MPI_Wtime();
+    world.cout0("TC Time = ", tc_time_end - tc_time_start);
   }
   return 0;
 }
@@ -319,5 +447,15 @@ int main(int argc, char **argv) {
   1. How to confirm correctness?
   2. How to ensure the completion of nested async?
   3. How to get the original source back? To get the triangle centrality, I need the original source vertex.
-    Add the global source ID into dodgr?
+    Add the global source ID into dodgr? Is it going to affect performance or functionality?
+  4. how to create a small dataset for debugging purposes?
+  5. calling async_barrier() in for_all()?
+  6. dodgr_edge_1d stores edges, which means there could be multiple edges for one vertex. but triangle centrality requires
+    there to be only one vertex.
+
+
+  
+  PROBLEM: there is a chance that a rank may not push any into its dodgr edge list because source % world.size()
+          does not result in the rank number. If the dataset is small, like the terrorist network dataset(only 152 edges
+          and 62 vertices). BUT IT WORKS!!! :)
 */

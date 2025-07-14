@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
 
   #ifdef CSV_READER
 
-  std::vector<std::string> filenames = {"../data/com-youtube.csv"};
+  std::vector<std::string> filenames = {"../data/Burkhardt_test_correctness/terrorist_network.csv"};
 
   
 
@@ -386,6 +386,7 @@ int main(int argc, char** argv) {
 
   world.barrier();
 
+  static int local_vertex;
   graph.for_all([](int vert, vert_info& vi){
      // calculate the non-core count by subtracting core count from total count
     vi.non_core_count = vi.total_count - vi.core_count + vi.triangle_count;
@@ -393,6 +394,10 @@ int main(int argc, char** argv) {
 
     if(vi.triangle_centrality > local_max_triangle_centrality){
       local_max_triangle_centrality = vi.triangle_centrality;
+      local_vertex = vert;
+    }
+    if(vert == 32){
+      s_world.cout("my TC is ", vi.triangle_centrality);
     }
     
     // s_world.cout("Vertex ", vert, " has total count of ", vi.total_count, ", core count: ", vi.core_count, ", non-core count: ", vi.non_core_count, 
@@ -423,6 +428,10 @@ int main(int argc, char** argv) {
   global_max_triangle_centrality = ygm::max(local_max_triangle_centrality, world);
 
   world.cout0("max triangle centrality: ", global_max_triangle_centrality);
+
+  if(global_max_triangle_centrality == local_max_triangle_centrality){
+    world.cout("local vertex that has max TC: ", local_vertex);
+  }
 
   world.barrier();
 

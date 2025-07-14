@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-add_ygm_executable(grey_wolf)
+#add_ygm_executable(grey_wolf)
 add_ygm_executable(triangle_centrality)
 #add_ygm_executable(bareiss)
 add_ygm_executable(testing)
@@ -25,3 +25,4 @@ function(add_gctc_executable name source)
 endfunction()
 
 add_gctc_executable(ygm_graph_challenge_tc ygm_graph_challenge_tc.cpp)
+add_gctc_executable(ygm_graph_challenge_tc_testing ygm_graph_challenge_tc_testing.cpp)
